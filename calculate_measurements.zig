@@ -17,7 +17,12 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer _ = gpa.deinit();
 
-    const allocator = gpa.allocator();
+    const gpa_allocator = gpa.allocator();
+
+    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
 
     var hmap = std.StringArrayHashMap(MinMaxMean).init(allocator);
     defer hmap.deinit();
