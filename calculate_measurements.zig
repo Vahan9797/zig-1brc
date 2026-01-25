@@ -32,11 +32,8 @@ pub fn main() !void {
     var file_reader = input_file.reader(&stdin_buffer);
     var reader = &file_reader.interface;
 
-    var allocating_writer = std.Io.Writer.Allocating.init(allocator);
-    defer allocating_writer.deinit();
-
-    while (reader.streamDelimiter(&allocating_writer.writer, '\n')) |_| {
-        var tokens = std.mem.tokenizeScalar(u8, allocating_writer.written(), ';');
+    while (reader.takeDelimiterExclusive('\n')) |line| {
+        var tokens = std.mem.tokenizeScalar(u8, line, ';');
 
         const key = try allocator.dupe(u8, tokens.next().?);
         const value = try std.fmt.parseFloat(f32, tokens.next().?);
@@ -51,7 +48,6 @@ pub fn main() !void {
                 .count = 1
             });
 
-            allocating_writer.clearRetainingCapacity();
             reader.toss(1);
             continue;
         }
@@ -63,7 +59,6 @@ pub fn main() !void {
         stationValPtr.?.*.sum   += value;
         stationValPtr.?.*.count += 1;
 
-        allocating_writer.clearRetainingCapacity();
         reader.toss(1);
     } else |err| {
         switch (err) {
