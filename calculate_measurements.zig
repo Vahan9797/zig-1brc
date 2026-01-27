@@ -10,6 +10,27 @@ const MinMaxMean = struct {
 const  input_file_path = "./measurements.txt";
 const output_file_path = "./results.txt";
 
+inline fn fastParseFloat(str: []u8) f32 {
+    const dotPos = str.len - 2; // we know the precision after dot is a single digit
+    const exp: u8 = str[str.len - 1] - '0';
+
+    const negative = str[0] == '-';
+    const base = if (negative) str[1..dotPos] else str[0..dotPos];
+
+    // we also know that temp cannot be <-100 or >100
+    const res_int: u16 = if (base.len == 2) 10 * (base[0] - '0') + (base[1] - '0') else base[0] - '0';
+
+    // Some numbers are getting IEEE754 trailing incorrections (which is expected)
+    // e.g. 14.9 = 14.900001
+    // So performing the calculation as f64
+    // then float casting back to f32 gets rid of trailing exponent bits
+    // and does not affect performance
+    @setFloatMode(.optimized);
+    const res_float: f32 = @as(f32, @floatCast(@as(f64, @floatFromInt(res_int * 10 + exp)) / 10.0));
+
+    return if (negative) -res_float else res_float;
+}
+
 pub fn main() !void {
     std.debug.print("Starting measurements calculation\n", .{});
     var timer = try std.time.Timer.start();
@@ -38,10 +59,10 @@ pub fn main() !void {
     var reader = &file_reader.interface;
 
     while (reader.takeDelimiterExclusive('\n')) |line| {
-        var tokens = std.mem.tokenizeScalar(u8, line, ';');
+        const tokenPos = std.mem.indexOfPosLinear(u8, line, 2, ";").?;
 
-        const key = try allocator.dupe(u8, tokens.next().?);
-        const value = try std.fmt.parseFloat(f32, tokens.next().?);
+        const key = try allocator.dupe(u8, line[0..tokenPos]);
+        const value = fastParseFloat(line[tokenPos+1..]);
 
         if (!hmap.contains(key)) {
             @branchHint(.unlikely);
