@@ -93,6 +93,17 @@ pub fn main() !void {
         }
     }
 
+    // sort the map alphabetically
+    hmap.sort(struct {
+        map_ptr: *std.StringArrayHashMap(MinMaxMean),
+
+        pub fn lessThan(self: @This(), a_index: usize, b_index: usize) bool {
+            const a_key = self.map_ptr.keys()[a_index];
+            const b_key = self.map_ptr.keys()[b_index];
+            return std.mem.order(u8, a_key, b_key) == .lt;
+        }
+    }{ .map_ptr = &hmap });
+
     var output_file = try cwd.createFile(output_file_path, .{ .truncate = true });
     var stdout_buffer: [page_size]u8 = undefined;
 
