@@ -435,8 +435,7 @@ pub fn main() !void {
 
     var timer = try std.time.Timer.start();
 
-    // page size is usually 4KB and for the optimal buffer size we need 64-128KB
-    const buffer_size = std.heap.pageSize() << 4;
+    const buffer_size = 64 * 1024; // 64KB
 
     var stdout_buffer: [buffer_size]u8 = undefined;
 

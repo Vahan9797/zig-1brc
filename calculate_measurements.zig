@@ -10,6 +10,10 @@ const MinMaxMean = struct {
 const  input_file_path = "./measurements.txt";
 const output_file_path = "./results.txt";
 
+// currently there are only 413 unique entries
+// but the original requirements state that they can be up to 10000
+const hmap_capacity: usize = 10000;
+
 inline fn fastParseFloat(str: []u8) f32 {
     const dotPos = str.len - 2; // we know the precision after dot is a single digit
     const exp: u8 = str[str.len - 1] - '0';
@@ -48,8 +52,10 @@ pub fn main() !void {
     var hmap = std.StringArrayHashMap(MinMaxMean).init(allocator);
     defer hmap.deinit();
 
-    const page_size = std.heap.pageSize() << 4;
-    var stdin_buffer: [page_size]u8 = undefined;
+    try hmap.ensureUnusedCapacity(hmap_capacity);
+
+    const cache_line = 64 * 1024; // 64KB
+    var stdin_buffer: [cache_line]u8 = undefined;
     const cwd = std.fs.cwd();
 
     var input_file = try cwd.openFile(input_file_path, .{ .lock = .shared });
@@ -97,15 +103,15 @@ pub fn main() !void {
     hmap.sort(struct {
         map_ptr: *std.StringArrayHashMap(MinMaxMean),
 
-        pub fn lessThan(self: @This(), a_index: usize, b_index: usize) bool {
-            const a_key = self.map_ptr.keys()[a_index];
-            const b_key = self.map_ptr.keys()[b_index];
-            return std.mem.order(u8, a_key, b_key) == .lt;
+        pub fn lessThan(self: @This(), a_idx: usize, b_idx: usize) bool {
+            const keys = self.map_ptr.keys();
+
+            return std.mem.order(u8, keys[a_idx], keys[b_idx]) == .lt;
         }
     }{ .map_ptr = &hmap });
 
     var output_file = try cwd.createFile(output_file_path, .{ .truncate = true });
-    var stdout_buffer: [page_size]u8 = undefined;
+    var stdout_buffer: [cache_line]u8 = undefined;
 
     var file_writer = output_file.writer(&stdout_buffer);
     var writer = &file_writer.interface;
