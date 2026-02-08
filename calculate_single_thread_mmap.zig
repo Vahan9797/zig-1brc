@@ -8,7 +8,7 @@ const MinMaxMean = struct {
 };
 
 const  input_file_path = "./measurements.txt";
-const output_file_path = "./results.txt";
+const output_file_path = "./results_st_mmap.txt";
 
 // currently there are only 413 unique entries
 // but the original requirements state that they can be up to 10000
@@ -54,20 +54,39 @@ pub fn main() !void {
 
     try hmap.ensureUnusedCapacity(hmap_capacity);
 
-    const cache_line = 64 * 1024; // 64KB
-    var stdin_buffer: [cache_line]u8 = undefined;
     const cwd = std.fs.cwd();
 
-    var input_file = try cwd.openFile(input_file_path, .{ .lock = .shared });
+    var input_file = try cwd.openFile(input_file_path, .{ .mode = .read_only });
     defer input_file.close();
 
-    var file_reader = input_file.reader(&stdin_buffer);
-    var reader = &file_reader.interface;
+    const input_f_stat = try input_file.stat();
+    const input_f_size = input_f_stat.size;
 
-    while (reader.takeDelimiterExclusive('\n')) |line| {
+    const input_ptr = try std.posix.mmap(
+        null,
+        input_f_size,
+        std.posix.PROT.READ,
+        .{ .TYPE = .PRIVATE, .POPULATE = true },
+        input_file.handle,
+        0
+    );
+    defer std.posix.munmap(input_ptr);
+
+    try std.posix.madvise(input_ptr.ptr, input_f_size, std.posix.MADV.WILLNEED);
+
+    var iter_len: usize = 0;
+
+    while (iter_len < input_f_size) {
+        // Its safe to say that each line must have at least 7 chars before new line
+        // [name is <2 chars];[measurement is <=3 chars] -> <=7 chars before new line
+        const idx_of_newline = std.mem.indexOfPosLinear(u8, input_ptr, iter_len + 7, "\n").?;
+        const line = input_ptr[iter_len..idx_of_newline];
+
+        iter_len += line.len + 1;
+
         const tokenPos = std.mem.indexOfPosLinear(u8, line, 2, ";").?;
 
-        const key = try allocator.dupe(u8, line[0..tokenPos]);
+        const key = line.ptr[0..tokenPos];
         const value = fastParseFloat(line[tokenPos+1..]);
 
         if (!hmap.contains(key)) {
@@ -80,7 +99,6 @@ pub fn main() !void {
                 .count = 1
             });
 
-            reader.toss(1);
             continue;
         }
 
@@ -90,13 +108,6 @@ pub fn main() !void {
         stationValPtr.?.*.max    = @max(stationValPtr.?.*.max, value);
         stationValPtr.?.*.sum   += value;
         stationValPtr.?.*.count += 1;
-
-        reader.toss(1);
-    } else |err| {
-        switch (err) {
-            error.EndOfStream => std.debug.print("Finished reading the input file\n", .{}),
-            else => std.debug.print("Something went wrong while reading the file: {}\n", .{ err })
-        }
     }
 
     // sort the map alphabetically
@@ -111,6 +122,8 @@ pub fn main() !void {
     }{ .map_ptr = &hmap });
 
     var output_file = try cwd.createFile(output_file_path, .{ .truncate = true });
+
+    const cache_line = 64 * 1024; // 64KB
     var stdout_buffer: [cache_line]u8 = undefined;
 
     var file_writer = output_file.writer(&stdout_buffer);
