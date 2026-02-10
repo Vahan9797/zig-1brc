@@ -5,8 +5,8 @@ A little late implementation of 1brc challenge, which was arranged by [Gunnar Mo
 Current stats (based on multiple tests using i7-11700 CPU):
 
 - `create_measurements.zig`: `~40-60 seconds`
-- `calculate_single_thread_no_mmap.zig`: `~34 seconds`
-- `calculate_single_thread_mmap.zig`: `~30 seconds (needs improvements)`
+- `calculate_single_thread_no_mmap.zig`: `~31 seconds`
+- `calculate_single_thread_mmap.zig`: `~28 seconds`
 
 To run this you need to have the latest Zig compiler (`v0.15.2` at the moment of creating this):
 

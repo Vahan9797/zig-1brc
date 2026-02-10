@@ -14,6 +14,69 @@ const output_file_path = "./results_no_mmap.txt";
 // but the original requirements state that they can be up to 10000
 const hmap_capacity: usize = 10000;
 
+const WYH_SEED: u64 = 0x2C6A9586D731E7C2;
+
+const HashCtx = struct {
+    pub fn hash(self: @This(), s: []const u8) u64 {
+        _ = self;
+        return std.hash.Wyhash.hash(WYH_SEED, s);
+    }
+    pub fn eql(self: @This(), a: []const u8, b: []const u8) bool {
+        _ = self;
+        return eql_impl(a, b);
+    }
+};
+
+pub fn eql_impl(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len){
+        @branchHint(.unlikely);
+        return false;
+    }
+
+    if (a.len <= 16) {
+        @branchHint(.likely);
+        if (a.len < 4) {
+            @branchHint(.unlikely);
+            const x = (a[0] ^ b[0]) | (a[a.len - 1] ^ b[a.len - 1]) | (a[a.len / 2] ^ b[a.len / 2]);
+            return x == 0;
+        }
+        var x: u32 = 0;
+        for ([_]usize{ 0, a.len - 4, (a.len >> 3) * 4, a.len - 4 - ((a.len >> 3) * 4) }) |n| {
+            x |= @as(u32, @bitCast(a[n..][0..4].*)) ^ @as(u32, @bitCast(b[n..][0..4].*));
+        }
+        return x == 0;
+    }
+    const Scan = if (std.simd.suggestVectorLength(u8)) |vec_size|
+        struct {
+            pub const size = vec_size;
+            pub const Chunk = @Vector(size, u8);
+            pub inline fn isNotEqual(chunk_a: Chunk, chunk_b: Chunk) bool {
+                return @reduce(.Or, chunk_a != chunk_b);
+            }
+        };
+
+    inline for (1..6) |s| {
+        const n = 16 << s;
+        if (n <= Scan.size and a.len <= n) {
+            const V = @Vector(n >> 1, u8);
+            var x = @as(V, a[0 .. n >> 1].*) ^ @as(V, b[0 .. n >> 1].*);
+            x |= @as(V, a[a.len - n >> 1 ..][0 .. n >> 1].*) ^ @as(V, b[a.len - n >> 1 ..][0 .. n >> 1].*);
+            const zero: V = @splat(0);
+            return !@reduce(.Or, x != zero);
+        }
+    }
+
+    for (0..(a.len - 1) / Scan.size) |i| {
+        const a_chunk: Scan.Chunk = @bitCast(a[i * Scan.size ..][0..Scan.size].*);
+        const b_chunk: Scan.Chunk = @bitCast(b[i * Scan.size ..][0..Scan.size].*);
+        if (Scan.isNotEqual(a_chunk, b_chunk)) return false;
+    }
+
+    const last_a_chunk: Scan.Chunk = @bitCast(a[a.len - Scan.size ..][0..Scan.size].*);
+    const last_b_chunk: Scan.Chunk = @bitCast(b[a.len - Scan.size ..][0..Scan.size].*);
+    return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
+}
+
 inline fn fastParseFloat(str: []u8) f32 {
     const dotPos = str.len - 2; // we know the precision after dot is a single digit
     const exp: u8 = str[str.len - 1] - '0';
@@ -39,20 +102,15 @@ pub fn main() !void {
     std.debug.print("Starting measurements calculation\n", .{});
     var timer = try std.time.Timer.start();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
-    defer _ = gpa.deinit();
-
-    const gpa_allocator = gpa.allocator();
-
-    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
     const allocator = arena.allocator();
 
-    var hmap = std.StringArrayHashMap(MinMaxMean).init(allocator);
-    defer hmap.deinit();
+    var hmap = std.HashMapUnmanaged([]const u8, MinMaxMean, HashCtx, 80).empty;
+    defer hmap.deinit(allocator);
 
-    try hmap.ensureUnusedCapacity(hmap_capacity);
+    try hmap.ensureUnusedCapacity(allocator, hmap_capacity);
 
     const cache_line = 64 * 1024; // 64KB
     var stdin_buffer: [cache_line]u8 = undefined;
@@ -73,7 +131,7 @@ pub fn main() !void {
         if (!hmap.contains(key)) {
             @branchHint(.unlikely);
 
-            _= try hmap.fetchPut(key, .{
+            _= try hmap.fetchPut(allocator, key, .{
                 .min   = value,
                 .max   = value,
                 .sum   = value,
@@ -100,15 +158,20 @@ pub fn main() !void {
     }
 
     // sort the map alphabetically
-    hmap.sort(struct {
-        map_ptr: *std.StringArrayHashMap(MinMaxMean),
+    var hmap_keys = try std.ArrayList([]const u8).initCapacity(allocator, hmap.count());
+    defer hmap_keys.deinit(allocator);
 
-        pub fn lessThan(self: @This(), a_idx: usize, b_idx: usize) bool {
-            const keys = self.map_ptr.keys();
+    var iterator = hmap.iterator();
 
-            return std.mem.order(u8, keys[a_idx], keys[b_idx]) == .lt;
+    while (iterator.next()) |entry| {
+        try hmap_keys.append(allocator, entry.key_ptr.*);
+    }
+
+    std.sort.heap([]const u8, hmap_keys.items, {}, struct {
+        fn less(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
         }
-    }{ .map_ptr = &hmap });
+    }.less);
 
     var output_file = try cwd.createFile(output_file_path, .{ .truncate = true });
     var stdout_buffer: [cache_line]u8 = undefined;
@@ -116,17 +179,16 @@ pub fn main() !void {
     var file_writer = output_file.writer(&stdout_buffer);
     var writer = &file_writer.interface;
 
-    var iterator = hmap.iterator();
-
-    while (iterator.next()) |entry| {
+    for (hmap_keys.items) |key| {
+        const value = hmap.get(key).?;
         const str = try std.fmt.allocPrint(
             allocator,
             "{s}={d:.1}/{d:.1}/{d:.1}\n",
             .{
-                entry.key_ptr.*,
-                entry.value_ptr.*.min,
-                entry.value_ptr.*.sum / entry.value_ptr.*.count,
-                entry.value_ptr.*.max
+                key,
+                value.min,
+                value.sum / value.count,
+                value.max
             }
         );
 
