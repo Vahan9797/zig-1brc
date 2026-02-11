@@ -123,7 +123,7 @@ pub fn main() !void {
     var reader = &file_reader.interface;
 
     while (reader.takeDelimiterExclusive('\n')) |line| {
-        const tokenPos = std.mem.indexOfPosLinear(u8, line, 2, ";").?;
+        const tokenPos = std.mem.indexOfScalarPos(u8, line, 2, ';').?;
 
         const key = try allocator.dupe(u8, line[0..tokenPos]);
         const value = fastParseFloat(line[tokenPos+1..]);

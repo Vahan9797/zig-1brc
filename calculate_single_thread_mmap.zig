@@ -138,12 +138,12 @@ pub fn main() !void {
     while (iter_len < input_f_size) {
         // Its safe to say that each line must have at least 7 chars before new line
         // [name is <2 chars];[measurement is <=3 chars] -> <=7 chars before new line
-        const idx_of_newline = std.mem.indexOfPosLinear(u8, input_ptr, iter_len + 7, "\n").?;
+        const idx_of_newline = std.mem.indexOfScalarPos(u8, input_ptr, iter_len + 7, '\n').?;
         const line = input_ptr[iter_len..idx_of_newline];
 
         iter_len += line.len + 1;
 
-        const tokenPos = std.mem.indexOfPosLinear(u8, line, 2, ";").?;
+        const tokenPos = std.mem.indexOfScalarPos(u8, line, 2, ';').?;
 
         const key = line.ptr[0..tokenPos];
         const value = fastParseFloat(line[tokenPos+1..]);

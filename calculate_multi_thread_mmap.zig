@@ -112,7 +112,6 @@ inline fn map_file(file: *std.fs.File) ![]align(std.heap.page_size_min) u8 {
         file.handle,
         0
     );
-    defer std.posix.munmap(input_ptr);
 
     try std.posix.madvise(input_ptr.ptr, f_size, std.posix.MADV.WILLNEED);
 
@@ -122,19 +121,19 @@ inline fn map_file(file: *std.fs.File) ![]align(std.heap.page_size_min) u8 {
 fn process_lines(
     allocator: *std.mem.Allocator,
     hmap: *std.HashMapUnmanaged([]const u8, MinMaxMean, HashCtx, 80),
-    input_ptr: *[]const u8
+    input_ptr: []const u8,
 ) void {
     var iter_len: usize = 0;
 
     while (iter_len < input_ptr.len) {
         // Its safe to say that each line must have at least 7 chars before new line
         // [name is <2 chars];[measurement is <=3 chars] -> <=7 chars before new line
-        const idx_of_newline = std.mem.indexOfPosLinear(u8, input_ptr.*, iter_len + 7, "\n").?;
-        const line = input_ptr.*[iter_len..idx_of_newline];
+        const idx_of_newline = std.mem.indexOfScalarPos(u8, input_ptr, iter_len + 7, '\n') orelse input_ptr.len;
+        const line = input_ptr[iter_len..idx_of_newline];
 
         iter_len += line.len + 1;
 
-        const tokenPos = std.mem.indexOfPosLinear(u8, line, 2, ";").?;
+        const tokenPos = std.mem.indexOfScalarPos(u8, line, 2, ';').?;
 
         const key = line.ptr[0..tokenPos];
         const value = fastParseFloat(line[tokenPos+1..]);
@@ -189,6 +188,7 @@ pub fn main() !void {
     defer input_file.close();
 
     const input_ptr = try map_file(&input_file);
+    defer std.posix.munmap(input_ptr);
 
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{ .allocator = allocator, .n_jobs = threads });
@@ -200,11 +200,10 @@ pub fn main() !void {
     const thread_step = @as(usize, input_ptr.len / threads);
 
     for (0..threads) |thread| {
-        const end = if (thread == threads - 1) input_ptr.len - 1 else std.mem.indexOfPosLinear(u8, input_ptr, thread_start + thread_step, "\n").?;
-        std.debug.print("End is: {}\n", .{ end });
-        var slice: []const u8 = input_ptr.ptr[thread_start..end];
+        const end = if (thread == threads - 1) input_ptr.len - 1 else std.mem.indexOfScalarPos(u8, input_ptr, thread_start + thread_step, '\n').?;
+        const slice = input_ptr[thread_start..end];
 
-        pool.spawnWg(&wg, process_lines, .{ &allocator, &hmaps[thread], &slice });
+        pool.spawnWg(&wg, process_lines, .{ &allocator, &hmaps[thread], slice });
 
         thread_start = end + 1;
     }
