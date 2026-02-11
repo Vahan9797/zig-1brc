@@ -78,78 +78,43 @@ pub fn eql_impl(a: []const u8, b: []const u8) bool {
     return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
 }
 
+inline fn fastParseChunks(comptime N: u8, comptime indices: anytype, str: []const u8) f32 {
+    var raw_bytes: @Vector(N, u8) = undefined;
+    const ascii_offset: @Vector(N, u8) = @splat('0');
+
+    inline for (0..N) |idx|
+        raw_bytes[idx] = str[indices[idx]];
+
+    const digits_u8 = raw_bytes - ascii_offset;
+    const digits_f32: @Vector(N, f32) = @floatFromInt(digits_u8);
+
+    const weights = if (N == 3) @Vector(N, f32){ 10.0, 1.0, 0.1 } else @Vector(N, f32){ 1.0, 0.1 };
+    const multiply = digits_f32 * weights;
+
+    return @reduce(.Add, multiply);
+}
 
 // We only have 3 different cases for str.len: 3, 4 and 5
 inline fn fastParseFloat(str: []const u8) f32 {
     const negative = str[0] == '-';
 
     if (str.len == 5) { // 5 length can only have a negative number
-        var raw_bytes: @Vector(3, u8) = undefined;
-        const indices = @Vector(3, usize){ 1, 2, 4 };
-        const ascii_offset: @Vector(3, u8) = @splat('0');
+        @branchHint(.unlikely);
 
-        inline for (0..3) |idx|
-            raw_bytes[idx] = str[indices[idx]];
-
-        const digits_u8 = raw_bytes - ascii_offset;
-        const digits_f32: @Vector(3, f32) = @floatFromInt(digits_u8);
-
-        const weights = @Vector(3, f32){ 10.0, 1.0, 0.1 };
-        const multiply = digits_f32 * weights;
-
-        return -1 * @reduce(.Add, multiply);
+        return -1 * fastParseChunks(3, @Vector(3, usize){ 1, 2, 4 }, str);
     } else if (str.len == 3) { // 3 length can only have a positive number 0<n<10
-        var raw_bytes: @Vector(2, u8) = undefined;
-        const indices = @Vector(2, usize){ 0, 2 };
-        const ascii_offset: @Vector(2, u8) = @splat('0');
-
-        inline for (0..2) |idx|
-            raw_bytes[idx] = str[indices[idx]];
-
-        const digits_u8 = raw_bytes - ascii_offset;
-        const digits_f32: @Vector(2, f32) = @floatFromInt(digits_u8);
-
-        const weights = @Vector(2, f32){ 1.0, 0.1 };
-        const multiply = digits_f32 * weights;
-
-        return @reduce(.Add, multiply);
+        return fastParseChunks(2, @Vector(2, usize){ 0, 2 }, str);
     } else {
         @branchHint(.likely);
 
         if (negative) {
             @branchHint(.unlikely);
 
-            var raw_bytes: @Vector(2, u8) = undefined;
-            const indices = @Vector(2, usize){ 1, 3 };
-            const ascii_offset: @Vector(2, u8) = @splat('0');
-
-            inline for (0..2) |idx|
-                raw_bytes[idx] = str[indices[idx]];
-
-            const digits_u8 = raw_bytes - ascii_offset;
-            const digits_f32: @Vector(2, f32) = @floatFromInt(digits_u8);
-
-            const weights = @Vector(2, f32){ 1.0, 0.1 };
-            const multiply = digits_f32 * weights;
-
-            return -1 * @reduce(.Add, multiply);
+            return -1 * fastParseChunks(2, @Vector(2, usize){ 1, 3 }, str);
         } else {
             @branchHint(.likely);
 
-            var raw_bytes: @Vector(3, u8) = undefined;
-            const indices = @Vector(3, usize){ 0, 1, 3 };
-            const ascii_offset: @Vector(3, u8) = @splat('0');
-
-            inline for (0..3) |idx|
-                raw_bytes[idx] = str[indices[idx]];
-
-            const digits_u8 = raw_bytes - ascii_offset;
-            const digits_f32: @Vector(3, f32) = @floatFromInt(digits_u8);
-
-            const weights = @Vector(3, f32){ 10.0, 1.0, 0.1 };
-            const multiply = digits_f32 * weights;
-
-            return @reduce(.Add, multiply);
+            return fastParseChunks(3, @Vector(3, usize){ 0, 1, 3 }, str);
         }
     }
 }
