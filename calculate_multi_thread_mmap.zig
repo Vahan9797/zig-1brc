@@ -79,25 +79,80 @@ inline fn eql_impl(a: []const u8, b: []const u8) bool {
     return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
 }
 
+
+// We only have 3 different cases for str.len: 3, 4 and 5
 inline fn fastParseFloat(str: []const u8) f32 {
-    const dotPos = str.len - 2; // we know the precision after dot is a single digit
-    const exp: u8 = str[str.len - 1] - '0';
-
     const negative = str[0] == '-';
-    const base = if (negative) str[1..dotPos] else str[0..dotPos];
 
-    // we also know that temp cannot be <-100 or >100
-    const res_int: u16 = if (base.len == 2) 10 * (base[0] - '0') + (base[1] - '0') else base[0] - '0';
+    if (str.len == 5) { // 5 length can only have a negative number
+        var raw_bytes: @Vector(3, u8) = undefined;
+        const indices = @Vector(3, usize){ 1, 2, 4 };
+        const ascii_offset: @Vector(3, u8) = @splat('0');
 
-    // Some numbers are getting IEEE754 trailing incorrections (which is expected)
-    // e.g. 14.9 = 14.900001
-    // So performing the calculation as f64
-    // then float casting back to f32 gets rid of trailing exponent bits
-    // and does not affect performance
-    @setFloatMode(.optimized);
-    const res_float: f32 = @as(f32, @floatCast(@as(f64, @floatFromInt(res_int * 10 + exp)) / 10.0));
+        inline for (0..3) |idx|
+            raw_bytes[idx] = str[indices[idx]];
 
-    return if (negative) -res_float else res_float;
+        const digits_u8 = raw_bytes - ascii_offset;
+        const digits_f32: @Vector(3, f32) = @floatFromInt(digits_u8);
+
+        const weights = @Vector(3, f32){ 10.0, 1.0, 0.1 };
+        const multiply = digits_f32 * weights;
+
+        return -1 * @reduce(.Add, multiply);
+    } else if (str.len == 3) { // 3 length can only have a positive number 0<n<10
+        var raw_bytes: @Vector(2, u8) = undefined;
+        const indices = @Vector(2, usize){ 0, 2 };
+        const ascii_offset: @Vector(2, u8) = @splat('0');
+
+        inline for (0..2) |idx|
+            raw_bytes[idx] = str[indices[idx]];
+
+        const digits_u8 = raw_bytes - ascii_offset;
+        const digits_f32: @Vector(2, f32) = @floatFromInt(digits_u8);
+
+        const weights = @Vector(2, f32){ 1.0, 0.1 };
+        const multiply = digits_f32 * weights;
+
+        return @reduce(.Add, multiply);
+    } else {
+        @branchHint(.likely);
+
+        if (negative) {
+            @branchHint(.unlikely);
+
+            var raw_bytes: @Vector(2, u8) = undefined;
+            const indices = @Vector(2, usize){ 1, 3 };
+            const ascii_offset: @Vector(2, u8) = @splat('0');
+
+            inline for (0..2) |idx|
+                raw_bytes[idx] = str[indices[idx]];
+
+            const digits_u8 = raw_bytes - ascii_offset;
+            const digits_f32: @Vector(2, f32) = @floatFromInt(digits_u8);
+
+            const weights = @Vector(2, f32){ 1.0, 0.1 };
+            const multiply = digits_f32 * weights;
+
+            return -1 * @reduce(.Add, multiply);
+        } else {
+            @branchHint(.likely);
+
+            var raw_bytes: @Vector(3, u8) = undefined;
+            const indices = @Vector(3, usize){ 0, 1, 3 };
+            const ascii_offset: @Vector(3, u8) = @splat('0');
+
+            inline for (0..3) |idx|
+                raw_bytes[idx] = str[indices[idx]];
+
+            const digits_u8 = raw_bytes - ascii_offset;
+            const digits_f32: @Vector(3, f32) = @floatFromInt(digits_u8);
+
+            const weights = @Vector(3, f32){ 10.0, 1.0, 0.1 };
+            const multiply = digits_f32 * weights;
+
+            return @reduce(.Add, multiply);
+        }
+    }
 }
 
 inline fn map_file(file: *std.fs.File) ![]align(std.heap.page_size_min) u8 {
