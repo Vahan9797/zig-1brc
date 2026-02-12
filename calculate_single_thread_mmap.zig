@@ -129,6 +129,33 @@ inline fn fastParseFloat(str: []const u8) f32 {
     }
 }
 
+fn process_hmap(
+    allocator: std.mem.Allocator,
+    hmap: *std.HashMapUnmanaged([]const u8, MinMaxMean, HashCtx, 80),
+    key: []const u8,
+    value: f32
+) void {
+    if (!hmap.contains(key)) {
+        @branchHint(.unlikely);
+
+        _= hmap.fetchPut(allocator, key, .{
+            .min   = value,
+            .max   = value,
+            .sum   = value,
+            .count = 1
+        }) catch {}; // silent failing
+    } else {
+        @branchHint(.likely);
+
+        const stationValPtr: ?*MinMaxMean = hmap.getPtr(key);
+
+        stationValPtr.?.*.min    = @min(stationValPtr.?.*.min, value);
+        stationValPtr.?.*.max    = @max(stationValPtr.?.*.max, value);
+        stationValPtr.?.*.sum   += value;
+        stationValPtr.?.*.count += 1;
+    }
+}
+
 pub fn main() !void {
     std.debug.print("Starting measurements calculation\n", .{});
     var timer = try std.time.Timer.start();
@@ -164,39 +191,48 @@ pub fn main() !void {
     try std.posix.madvise(input_ptr.ptr, input_f_size, std.posix.MADV.WILLNEED);
 
     var iter_len: usize = 0;
+    const vec_size: usize = 32;
 
     while (iter_len < input_f_size) {
-        // Its safe to say that each line must have at least 7 chars before new line
-        // [name is <2 chars];[measurement is <=3 chars] -> <=7 chars before new line
-        const idx_of_newline = std.mem.indexOfScalarPos(u8, input_ptr, iter_len + 7, '\n').?;
-        const line = input_ptr[iter_len..idx_of_newline];
+        const SliceVec = @Vector(vec_size, u8);
 
-        iter_len += line.len + 1;
+        if (iter_len + vec_size < input_f_size) {
+            @branchHint(.likely);
 
-        const tokenPos = std.mem.indexOfScalarPos(u8, line, 2, ';').?;
+            const slice: SliceVec = input_ptr[iter_len..][0..vec_size].*;
 
-        const key = line.ptr[0..tokenPos];
-        const value = fastParseFloat(line[tokenPos+1..]);
+            if (std.simd.firstIndexOfValue(slice, '\n')) |offset| {
+                @branchHint(.likely);
 
-        if (!hmap.contains(key)) {
+                const idx_of_newline = @as(usize, offset);
+                const line = input_ptr.ptr[iter_len..iter_len+idx_of_newline];
+
+                const tokenPos = std.simd.firstIndexOfValue(slice, ';').?;
+
+                const key = line.ptr[0..tokenPos];
+                const value = fastParseFloat(line[tokenPos+1..idx_of_newline]);
+
+                iter_len += idx_of_newline + 1;
+
+                process_hmap(allocator, &hmap, key, value);
+            }
+        } else {
             @branchHint(.unlikely);
 
-            _= try hmap.fetchPut(allocator, key, .{
-                .min   = value,
-                .max   = value,
-                .sum   = value,
-                .count = 1
-            });
+            // Its safe to say that each line must have at least 7 chars before new line
+            // [name is <2 chars];[measurement is <=3 chars] -> <=7 chars before new line
+            const idx_of_newline = std.mem.indexOfScalarPos(u8, input_ptr, iter_len + 7, '\n') orelse input_f_size;
 
-            continue;
+            const line = input_ptr[iter_len..idx_of_newline];
+            const tokenPos = std.mem.indexOfScalarPos(u8, line, 2, ';').?;
+
+            const key = line.ptr[0..tokenPos];
+            const value = fastParseFloat(line[tokenPos+1..]);
+
+            iter_len += line.len + 1;
+
+            process_hmap(allocator, &hmap, key, value);
         }
-
-        const stationValPtr: ?*MinMaxMean = hmap.getPtr(key);
-
-        stationValPtr.?.*.min    = @min(stationValPtr.?.*.min, value);
-        stationValPtr.?.*.max    = @max(stationValPtr.?.*.max, value);
-        stationValPtr.?.*.sum   += value;
-        stationValPtr.?.*.count += 1;
     }
 
     // sort the map alphabetically

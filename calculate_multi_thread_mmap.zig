@@ -148,38 +148,23 @@ inline fn map_file(file: *std.fs.File) ![]align(std.heap.page_size_min) u8 {
     return input_ptr;
 }
 
-fn process_lines(
+fn process_hmap(
     allocator: *std.mem.Allocator,
     hmap: *std.HashMapUnmanaged([]const u8, MinMaxMean, HashCtx, 80),
-    input_ptr: []const u8,
+    key: []const u8,
+    value: f32
 ) void {
-    var iter_len: usize = 0;
+    if (!hmap.contains(key)) {
+        @branchHint(.unlikely);
 
-    while (iter_len < input_ptr.len) {
-        // Its safe to say that each line must have at least 7 chars before new line
-        // [name is <2 chars];[measurement is <=3 chars] -> <=7 chars before new line
-        const idx_of_newline = std.mem.indexOfScalarPos(u8, input_ptr, iter_len + 7, '\n') orelse input_ptr.len;
-        const line = input_ptr[iter_len..idx_of_newline];
-
-        iter_len += line.len + 1;
-
-        const tokenPos = std.mem.indexOfScalarPos(u8, line, 2, ';').?;
-
-        const key = line.ptr[0..tokenPos];
-        const value = fastParseFloat(line[tokenPos+1..]);
-
-        if (!hmap.contains(key)) {
-            @branchHint(.unlikely);
-
-            _= hmap.fetchPut(allocator.*, key, .{
-                .min   = value,
-                .max   = value,
-                .sum   = value,
-                .count = 1
-            }) catch {}; // silent failing
-
-            continue;
-        }
+        _= hmap.fetchPut(allocator.*, key, .{
+            .min   = value,
+            .max   = value,
+            .sum   = value,
+            .count = 1
+        }) catch {}; // silent failing
+    } else {
+        @branchHint(.likely);
 
         const stationValPtr: ?*MinMaxMean = hmap.getPtr(key);
 
@@ -187,6 +172,57 @@ fn process_lines(
         stationValPtr.?.*.max    = @max(stationValPtr.?.*.max, value);
         stationValPtr.?.*.sum   += value;
         stationValPtr.?.*.count += 1;
+    }
+}
+
+fn process_lines(
+    allocator: *std.mem.Allocator,
+    hmap: *std.HashMapUnmanaged([]const u8, MinMaxMean, HashCtx, 80),
+    input_ptr: []const u8,
+) void {
+    var iter_len: usize = 0;
+    const vec_size: usize = 32;
+
+    while (iter_len < input_ptr.len) {
+        const SliceVec = @Vector(vec_size, u8);
+
+        if (iter_len + vec_size < input_ptr.len) {
+            @branchHint(.likely);
+
+            const slice: SliceVec = input_ptr[iter_len..][0..vec_size].*;
+
+            if (std.simd.firstIndexOfValue(slice, '\n')) |offset| {
+                @branchHint(.likely);
+
+                const idx_of_newline = @as(usize, offset);
+                const line = input_ptr.ptr[iter_len..iter_len+idx_of_newline];
+
+                const tokenPos = std.simd.firstIndexOfValue(slice, ';').?;
+
+                const key = line.ptr[0..tokenPos];
+                const value = fastParseFloat(line[tokenPos+1..idx_of_newline]);
+
+                iter_len += idx_of_newline + 1;
+
+                process_hmap(allocator, hmap, key, value);
+            }
+        } else {
+            @branchHint(.unlikely);
+
+            // Its safe to say that each line must have at least 7 chars before new line
+            // [name is <2 chars];[measurement is <=3 chars] -> <=7 chars before new line
+            const idx_of_newline = std.mem.indexOfScalarPos(u8, input_ptr, iter_len + 7, '\n') orelse input_ptr.len;
+
+            const line = input_ptr[iter_len..idx_of_newline];
+            const tokenPos = std.mem.indexOfScalarPos(u8, line, 2, ';').?;
+
+            const key = line.ptr[0..tokenPos];
+            const value = fastParseFloat(line[tokenPos+1..]);
+
+            iter_len += line.len + 1;
+
+            process_hmap(allocator, hmap, key, value);
+        }
     }
 }
 
