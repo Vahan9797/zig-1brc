@@ -78,9 +78,19 @@ pub fn eql_impl(a: []const u8, b: []const u8) bool {
     return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
 }
 
-inline fn fastParseChunks(comptime N: u8, comptime indices: anytype, str: []const u8) f32 {
+const IndiceVec = union(enum) {
+    long: @Vector(3, usize),
+    short: @Vector(2, usize)
+};
+
+inline fn fastParseChunks(comptime N: u8, comptime indiceVec: IndiceVec, str: []const u8) f32 {
     var raw_bytes: @Vector(N, u8) = undefined;
     const ascii_offset: @Vector(N, u8) = @splat('0');
+
+    const indices = switch (indiceVec) {
+        .long => |v| v,
+        .short => |v| v
+    };
 
     inline for (0..N) |idx|
         raw_bytes[idx] = str[indices[idx]];
@@ -101,20 +111,20 @@ inline fn fastParseFloat(str: []const u8) f32 {
     if (str.len == 5) { // 5 length can only have a negative number
         @branchHint(.unlikely);
 
-        return -1 * fastParseChunks(3, @Vector(3, usize){ 1, 2, 4 }, str);
+        return -1 * fastParseChunks(3, IndiceVec{ .long = .{ 1, 2, 4 } }, str);
     } else if (str.len == 3) { // 3 length can only have a positive number 0<n<10
-        return fastParseChunks(2, @Vector(2, usize){ 0, 2 }, str);
+        return fastParseChunks(2, IndiceVec{ .short = .{ 0, 2 } }, str);
     } else {
         @branchHint(.likely);
 
         if (negative) {
             @branchHint(.unlikely);
 
-            return -1 * fastParseChunks(2, @Vector(2, usize){ 1, 3 }, str);
+            return -1 * fastParseChunks(2, IndiceVec{ .short = .{ 1, 3 } }, str);
         } else {
             @branchHint(.likely);
 
-            return fastParseChunks(3, @Vector(3, usize){ 0, 1, 3 }, str);
+            return fastParseChunks(3, IndiceVec{ .long = .{ 0, 1, 3 } }, str);
         }
     }
 }
