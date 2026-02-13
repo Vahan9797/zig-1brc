@@ -88,8 +88,7 @@ inline fn fastParseChunks(comptime N: u8, comptime indiceVec: IndiceVec, str: []
     const ascii_offset: @Vector(N, u8) = @splat('0');
 
     const indices = switch (indiceVec) {
-        .long => |v| v,
-        .short => |v| v
+        inline .long, .short => |v| v
     };
 
     inline for (0..N) |idx|
@@ -191,7 +190,7 @@ pub fn main() !void {
     try std.posix.madvise(input_ptr.ptr, input_f_size, std.posix.MADV.WILLNEED);
 
     var iter_len: usize = 0;
-    const vec_size: usize = 32;
+    const vec_size: usize = std.simd.suggestVectorLength(u8) orelse 32;
 
     while (iter_len < input_f_size) {
         const SliceVec = @Vector(vec_size, u8);

@@ -87,8 +87,7 @@ inline fn fastParseChunks(comptime N: u8, comptime indiceVec: IndiceVec, str: []
     const ascii_offset: @Vector(N, u8) = @splat('0');
 
     const indices = switch (indiceVec) {
-        .long => |v| v,
-        .short => |v| v
+        inline .long, .short => |v| v
     };
 
     inline for (0..N) |idx|
