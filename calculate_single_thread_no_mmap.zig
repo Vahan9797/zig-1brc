@@ -157,26 +157,25 @@ pub fn main() !void {
         const key = try allocator.dupe(u8, line[0..tokenPos]);
         const value = fastParseFloat(line[tokenPos+1..]);
 
-        if (!hmap.contains(key)) {
+        if (hmap.getPtr(key)) |valPtr| {
+            @branchHint(.likely);
+
+            const stationValPtr: *MinMaxMean = valPtr;
+
+            stationValPtr.*.min    = @min(stationValPtr.*.min, value);
+            stationValPtr.*.max    = @max(stationValPtr.*.max, value);
+            stationValPtr.*.sum   += value;
+            stationValPtr.*.count += 1;
+        } else {
             @branchHint(.unlikely);
 
-            _= try hmap.fetchPut(allocator, key, .{
+            _= hmap.put(allocator, key, .{
                 .min   = value,
                 .max   = value,
                 .sum   = value,
                 .count = 1
-            });
-
-            reader.toss(1);
-            continue;
+            }) catch {}; // silent failing
         }
-
-        const stationValPtr: ?*MinMaxMean = hmap.getPtr(key);
-
-        stationValPtr.?.*.min    = @min(stationValPtr.?.*.min, value);
-        stationValPtr.?.*.max    = @max(stationValPtr.?.*.max, value);
-        stationValPtr.?.*.sum   += value;
-        stationValPtr.?.*.count += 1;
 
         reader.toss(1);
     } else |err| {

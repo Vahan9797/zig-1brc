@@ -153,24 +153,24 @@ fn process_hmap(
     key: []const u8,
     value: f32
 ) void {
-    if (!hmap.contains(key)) {
+    if (hmap.getPtr(key)) |valPtr| {
+        @branchHint(.likely);
+
+        const stationValPtr: *MinMaxMean = valPtr;
+
+        stationValPtr.*.min    = @min(stationValPtr.*.min, value);
+        stationValPtr.*.max    = @max(stationValPtr.*.max, value);
+        stationValPtr.*.sum   += value;
+        stationValPtr.*.count += 1;
+    } else {
         @branchHint(.unlikely);
 
-        _= hmap.fetchPut(allocator.*, key, .{
+        _= hmap.put(allocator.*, key, .{
             .min   = value,
             .max   = value,
             .sum   = value,
             .count = 1
         }) catch {}; // silent failing
-    } else {
-        @branchHint(.likely);
-
-        const stationValPtr: ?*MinMaxMean = hmap.getPtr(key);
-
-        stationValPtr.?.*.min    = @min(stationValPtr.?.*.min, value);
-        stationValPtr.?.*.max    = @max(stationValPtr.?.*.max, value);
-        stationValPtr.?.*.sum   += value;
-        stationValPtr.?.*.count += 1;
     }
 }
 
