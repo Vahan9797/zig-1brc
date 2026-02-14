@@ -14,18 +14,59 @@ const output_file_path = "./results_st_mmap.txt";
 // but the original requirements state that they can be up to 10000
 const hmap_capacity: usize = 10000;
 
-const WYH_SEED: u64 = 0x2C6A9586D731E7C2;
+const SEED: u64 = 0x8ebc6af09c88c6e3;
 
 const HashCtx = struct {
     pub fn hash(self: @This(), s: []const u8) u64 {
         _ = self;
-        return std.hash.Wyhash.hash(WYH_SEED, s);
+        return hash_impl(SEED, s);
     }
     pub fn eql(self: @This(), a: []const u8, b: []const u8) bool {
         _ = self;
         return eql_impl(a, b);
     }
 };
+
+// Micro-optimization of https://codeberg.org/ziglang/zig/src/branch/master/lib/std/hash/wyhash.zig
+// for our use case
+const secret = [_]u64{
+    0xa0761d6478bd642f,
+    0xe7037ed1a0b428db
+};
+
+fn hash_impl(seed: u64, name: []const u8) u64 {
+    const len = @min(name.len, 16);
+
+    if (len >= 4) {
+        @branchHint(.likely);
+        const end = len - 4;
+        const quarter = (len >> 3) << 2;
+        const a = (read(4, name[0..]) << 32) | read(4, name[quarter..]);
+        const b = (read(4, name[end..]) << 32) | read(4, name[end - quarter ..]);
+
+        return seed ^ mix(a ^ secret[0], b ^ secret[1]);
+    } else {
+        return (@as(u64, name[0]) << 16) | (@as(u64, name[len >> 1]) << 8) | name[len - 1];
+    }
+}
+
+inline fn mum(a: *u64, b: *u64) void {
+    const x = @as(u128, a.*) *% b.*;
+    a.* = @as(u64, @truncate(x));
+    b.* = @as(u64, @truncate(x >> 64));
+}
+
+inline fn mix(a_: u64, b_: u64) u64 {
+    var a = a_;
+    var b = b_;
+    mum(&a, &b);
+    return a ^ b;
+}
+
+inline fn read(comptime bytes: usize, data: []const u8) u64 {
+    const T = std.meta.Int(.unsigned, 8 * bytes);
+    return @as(u64, std.mem.readInt(T, data[0..bytes], .little));
+}
 
 pub fn eql_impl(a: []const u8, b: []const u8) bool {
     if (a.len != b.len){
