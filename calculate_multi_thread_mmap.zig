@@ -19,7 +19,7 @@ const SEED: u64 = 0x8ebc6af09c88c6e3;
 const HashCtx = struct {
     pub fn hash(self: @This(), s: []const u8) u64 {
         _ = self;
-        return hash_impl(SEED, s);
+        return CustomWyhash.hash_impl(SEED, s);
     }
     pub fn eql(self: @This(), a: []const u8, b: []const u8) bool {
         _ = self;
@@ -28,47 +28,45 @@ const HashCtx = struct {
 };
 
 // Micro-optimization of https://codeberg.org/ziglang/zig/src/branch/master/lib/std/hash/wyhash.zig
-// for our use case
-const secret = [_]u64{
-    0xa0761d6478bd642f,
-    0xe7037ed1a0b428db
-};
+// for our use case (also a little mix of rapidhash)
+const CustomWyhash = struct {
+    const secret = [2]u64{
+        0x8bb84b93962eacc9,
+        0x4b33a62ed433d4a3
+    };
 
-fn hash_impl(seed: u64, name: []const u8) u64 {
-    const len = @min(name.len, 16);
+    pub fn hash_impl(seed: u64, name: []const u8) u64 {
+        const len = @min(name.len, 16);
+        var s = seed ^ secret[0] ^ len;
+        if (len >= 4) {
+            @branchHint(.likely);
 
-    if (len >= 4) {
-        @branchHint(.likely);
-        const end = len - 4;
-        const quarter = (len >> 3) << 2;
-        const a = (read(4, name[0..]) << 32) | read(4, name[quarter..]);
-        const b = (read(4, name[end..]) << 32) | read(4, name[end - quarter ..]);
-        //a ^= secret[1];
-        //b ^= seed ^ mix(seed ^ secret[0], secret[1]);
-        //mum(&a, &b);
-        return seed ^ mix(a ^ secret[0], b ^ secret[1]);
-    } else {
-        return (@as(u64, name[0]) << 16) | (@as(u64, name[len >> 1]) << 8) | name[len - 1];
+            const combined = (@as(u64, readBytes(4, name[0..4])) << 32) | @as(u64, readBytes(4, name[len-4..]));
+
+            // Mix the combined bytes with a secret
+            s ^= mum(combined ^ secret[0], secret[1]);
+        } else {
+            s ^= mum(readSmall(name, len) ^ secret[0], secret[1]);
+        }
+
+        return s;
     }
-}
 
-inline fn mum(a: *u64, b: *u64) void {
-    const x = @as(u128, a.*) *% b.*;
-    a.* = @as(u64, @truncate(x));
-    b.* = @as(u64, @truncate(x >> 64));
-}
+    inline fn mum(a: u64, b: u64) u64 {
+        const r = @as(u128, a) * b;
+        return @as(u64, @truncate(r)) ^ @as(u64, @truncate(r >> 64));
+    }
 
-inline fn mix(a_: u64, b_: u64) u64 {
-    var a = a_;
-    var b = b_;
-    mum(&a, &b);
-    return a ^ b;
-}
+    // For len < 4
+    inline fn readSmall(p: []const u8, len: usize) u64 {
+        return (@as(u64, p[0]) << 56) | (@as(u64, p[len >> 1]) << 32) | @as(u64, p[len - 1]);
+    }
 
-inline fn read(comptime bytes: usize, data: []const u8) u64 {
-    const T = std.meta.Int(.unsigned, 8 * bytes);
-    return @as(u64, std.mem.readInt(T, data[0..bytes], .little));
-}
+    inline fn readBytes(comptime bytes: usize, data: []const u8) u64 {
+        const T = std.meta.Int(.unsigned, 8 * bytes);
+        return @as(u64, std.mem.readInt(T, data[0..bytes], .little));
+    }
+};
 
 // eql_impl was taken from https://github.com/rrowniak/1brc, cool implementation of eql check
 inline fn eql_impl(a: []const u8, b: []const u8) bool {
