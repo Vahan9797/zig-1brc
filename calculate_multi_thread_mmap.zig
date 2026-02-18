@@ -183,7 +183,7 @@ inline fn map_file(file: *std.fs.File) ![]align(std.heap.page_size_min) u8 {
         0
     );
 
-    try std.posix.madvise(input_ptr.ptr, f_size, std.posix.MADV.WILLNEED);
+    try std.posix.madvise(input_ptr.ptr, f_size, std.posix.MADV.WILLNEED | std.posix.MADV.HUGEPAGE);
 
     return input_ptr;
 }
@@ -306,7 +306,7 @@ pub fn main() !void {
     const thread_step = @as(usize, input_ptr.len / threads);
 
     for (0..threads) |thread| {
-        const end = if (thread == threads - 1) input_ptr.len - 1 else std.mem.indexOfScalarPos(u8, input_ptr, thread_start + thread_step, '\n').?;
+        const end = std.mem.indexOfScalarPos(u8, input_ptr, thread_start + thread_step, '\n') orelse input_ptr.len - 1;
         const slice = input_ptr[thread_start..end];
 
         pool.spawnWg(&wg, process_lines, .{ &allocator, &hmaps[thread], slice });

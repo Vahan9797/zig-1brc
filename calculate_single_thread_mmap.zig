@@ -228,7 +228,7 @@ pub fn main() !void {
     );
     defer std.posix.munmap(input_ptr);
 
-    try std.posix.madvise(input_ptr.ptr, input_f_size, std.posix.MADV.WILLNEED);
+    try std.posix.madvise(input_ptr.ptr, input_f_size, std.posix.MADV.WILLNEED | std.posix.MADV.HUGEPAGE);
 
     var iter_len: usize = 0;
     const vec_size: usize = std.simd.suggestVectorLength(u8) orelse 32;
