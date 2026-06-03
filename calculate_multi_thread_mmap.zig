@@ -357,6 +357,7 @@ pub fn main() !void {
     }.less);
 
     var output_file = try cwd.createFile(output_file_path, .{ .truncate = true });
+    defer output_file.close();
 
     const cache_line = 64 * 1024; // 64KB
     var stdout_buffer: [cache_line]u8 = undefined;

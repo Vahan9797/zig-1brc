@@ -243,6 +243,8 @@ pub fn main() !void {
     }.less);
 
     var output_file = try cwd.createFile(output_file_path, .{ .truncate = true });
+    defer output_file.close();
+
     var stdout_buffer: [cache_line]u8 = undefined;
 
     var file_writer = output_file.writer(&stdout_buffer);
